@@ -117,7 +117,11 @@ app.innerHTML = `
       <div class="row">
         <button id="drawBtn" class="btn btn-primary btn-draw">开始补给抽取</button>
         <button id="resetResultBtn" class="btn btn-secondary">重置抽取记录</button>
-        <button id="exportBtn" class="btn btn-secondary">导出中签名单</button>
+        <button id="exportCurrentBtn" class="btn btn-secondary">导出本轮名单</button>
+        <button id="exportBtn" class="btn btn-secondary">导出全部历史</button>
+        <button id="exportJsonBtn" class="btn btn-secondary">导出历史JSON</button>
+        <button id="importJsonBtn" class="btn btn-secondary">导入历史JSON</button>
+        <input id="importJsonInput" type="file" accept="application/json" hidden />
       </div>
     </section>
 
@@ -128,6 +132,11 @@ app.innerHTML = `
       </div>
       <p id="resultTip" class="result-tip">执行抽取后，此处将显示本轮中签成员列表。</p>
       <ul id="resultList" class="result-list" aria-live="polite"></ul>
+      <div class="history-header">
+        <h3>抽奖历史记录</h3>
+        <span class="hint">Round History</span>
+      </div>
+      <ul id="historyList" class="history-list" aria-live="polite"></ul>
     </section>
   </main>
 `;
@@ -137,6 +146,8 @@ const STORAGE_KEY = "lucky_draw_state_v1";
 const state = {
   allEntries: [],
   winners: [],
+  drawRounds: [],
+  lastRoundWinners: [],
 };
 
 const el = {
@@ -146,9 +157,14 @@ const el = {
   drawCount: document.getElementById("drawCount"),
   drawBtn: document.getElementById("drawBtn"),
   resetResultBtn: document.getElementById("resetResultBtn"),
+  exportCurrentBtn: document.getElementById("exportCurrentBtn"),
   exportBtn: document.getElementById("exportBtn"),
+  exportJsonBtn: document.getElementById("exportJsonBtn"),
+  importJsonBtn: document.getElementById("importJsonBtn"),
+  importJsonInput: document.getElementById("importJsonInput"),
   resultTip: document.getElementById("resultTip"),
   resultList: document.getElementById("resultList"),
+  historyList: document.getElementById("historyList"),
   totalCount: document.getElementById("totalCount"),
   availableCount: document.getElementById("availableCount"),
   winnerCount: document.getElementById("winnerCount"),
@@ -220,6 +236,34 @@ function renderResultList(items) {
   });
 }
 
+function renderHistoryList() {
+  el.historyList.innerHTML = "";
+
+  if (!state.drawRounds.length) {
+    const empty = document.createElement("li");
+    empty.className = "history-item history-empty";
+    empty.textContent = "暂无历史记录，完成抽取后将自动保存到本地。";
+    el.historyList.appendChild(empty);
+    return;
+  }
+
+  const rounds = [...state.drawRounds].reverse();
+  rounds.forEach((round) => {
+    const li = document.createElement("li");
+    li.className = "history-item";
+    const winnerText = round.winners.map((name) => escapeHtml(name)).join(" / ");
+    li.innerHTML = `
+      <div class="history-top">
+        <strong>第 ${round.round} 轮</strong>
+        <span>${escapeHtml(round.time)}</span>
+      </div>
+      <div class="history-mid">${winnerText}</div>
+      <div class="history-bottom">人数：${round.winners.length}</div>
+    `;
+    el.historyList.appendChild(li);
+  });
+}
+
 function escapeHtml(text) {
   return text
     .replaceAll("&", "&amp;")
@@ -246,6 +290,8 @@ function saveState() {
   const payload = {
     allEntries: state.allEntries,
     winners: state.winners,
+    drawRounds: state.drawRounds,
+    lastRoundWinners: state.lastRoundWinners,
     drawCount: getValidDrawCount(),
     repeatMode: getRepeatMode(),
     rawInput: el.input.value,
@@ -261,6 +307,8 @@ function loadState() {
 
     state.allEntries = Array.isArray(data.allEntries) ? data.allEntries : [];
     state.winners = Array.isArray(data.winners) ? data.winners : [];
+    state.drawRounds = Array.isArray(data.drawRounds) ? data.drawRounds : [];
+    state.lastRoundWinners = Array.isArray(data.lastRoundWinners) ? data.lastRoundWinners : [];
     el.input.value =
       typeof data.rawInput === "string" ? data.rawInput : state.allEntries.join("\n");
     el.drawCount.value = Number.isFinite(data.drawCount) ? String(data.drawCount) : "1";
@@ -277,10 +325,11 @@ function handleSaveList() {
   if (!list.length) {
     state.allEntries = [];
     state.winners = [];
+    state.lastRoundWinners = [];
     renderStats();
     renderResultList([]);
     saveState();
-    showNotice("成员池为空，已清空历史数据。");
+    showNotice("成员池为空，当前抽取记录已清空，历史记录已保留。");
     return;
   }
 
@@ -296,10 +345,11 @@ function handleClearList() {
   el.input.value = "";
   state.allEntries = [];
   state.winners = [];
+  state.lastRoundWinners = [];
   renderStats();
   renderResultList([]);
   saveState();
-  showNotice("成员池已清空。");
+  showNotice("成员池已清空，历史记录已保留。");
 }
 
 function sleep(ms) {
@@ -343,8 +393,15 @@ async function handleDraw() {
     return;
   }
 
+  state.lastRoundWinners = [...winners];
   state.winners = Array.from(new Set([...state.winners, ...winners]));
+  state.drawRounds.push({
+    round: state.drawRounds.length + 1,
+    winners: [...winners],
+    time: new Date().toLocaleString(),
+  });
   renderResultList(winners);
+  renderHistoryList();
   renderStats();
   saveState();
   showNotice("终端提示：锁定完成，结果已确认。");
@@ -357,41 +414,150 @@ async function handleDraw() {
 
 function handleResetResult() {
   state.winners = [];
+  state.lastRoundWinners = [];
   renderStats();
   renderResultList([]);
   saveState();
-  showNotice("抽取记录已重置。");
+  showNotice("当前抽取记录已重置，历史记录已保留。");
+}
+
+function downloadTextFile(content, fileName) {
+  const blob = new Blob([content], { type: "text/plain;charset=utf-8" });
+  const link = document.createElement("a");
+  link.href = URL.createObjectURL(blob);
+  link.download = fileName;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(link.href);
+}
+
+function handleExportCurrent() {
+  if (!state.lastRoundWinners.length) {
+    showNotice("暂无本轮结果可导出，请先执行一轮抽取。", true);
+    return;
+  }
+
+  const roundNo = state.drawRounds.length;
+  const lines = [
+    "胜利女神工会抽奖终端 / 本轮中签名单导出",
+    `公会名称：${TERMINAL_CONFIG.guildName}`,
+    `公会 UID：${TERMINAL_CONFIG.guildUid}`,
+    `当前活动：${TERMINAL_CONFIG.activityName}`,
+    `导出时间：${new Date().toLocaleString()}`,
+    `轮次：第 ${roundNo} 轮`,
+    `中签人数：${state.lastRoundWinners.length}`,
+    "",
+    "本轮中签名单：",
+    ...state.lastRoundWinners.map((name, idx) => `${idx + 1}. ${name}`),
+  ];
+  downloadTextFile(lines.join("\n"), `round-${roundNo}-winners-${Date.now()}.txt`);
 }
 
 function handleExport() {
-  if (!state.winners.length) {
-    showNotice("暂无可导出的中签名单。", true);
+  if (!state.drawRounds.length) {
+    showNotice("暂无可导出的历史记录。", true);
     return;
   }
 
   const modeText = "不可重复中签（强制）";
   const lines = [
-    "胜利女神工会抽奖终端 / 中签名单导出",
+    "胜利女神工会抽奖终端 / 全部抽奖历史导出",
     `公会名称：${TERMINAL_CONFIG.guildName}`,
     `公会 UID：${TERMINAL_CONFIG.guildUid}`,
     `当前活动：${TERMINAL_CONFIG.activityName}`,
     `导出时间：${new Date().toLocaleString()}`,
     `抽奖模式：${modeText}`,
-    `中签总条目：${state.winners.length}`,
+    `历史轮次数：${state.drawRounds.length}`,
+    `累计中签人数（去重）：${state.winners.length}`,
     "",
-    "中签名单：",
-    ...state.winners.map((name, idx) => `${idx + 1}. ${name}`),
+    "==== 轮次明细 ====",
   ];
-  const content = lines.join("\n");
 
-  const blob = new Blob([content], { type: "text/plain;charset=utf-8" });
-  const link = document.createElement("a");
-  link.href = URL.createObjectURL(blob);
-  link.download = `lucky-draw-winners-${Date.now()}.txt`;
-  document.body.appendChild(link);
-  link.click();
-  link.remove();
-  URL.revokeObjectURL(link.href);
+  state.drawRounds.forEach((round) => {
+    lines.push(`第 ${round.round} 轮 | ${round.time} | ${round.winners.length} 人`);
+    round.winners.forEach((name, idx) => {
+      lines.push(`  ${idx + 1}. ${name}`);
+    });
+    lines.push("");
+  });
+
+  downloadTextFile(lines.join("\n"), `draw-history-${Date.now()}.txt`);
+}
+
+function handleExportHistoryJson() {
+  if (!state.drawRounds.length) {
+    showNotice("暂无历史记录可导出。", true);
+    return;
+  }
+
+  const payload = {
+    version: 1,
+    exportedAt: new Date().toISOString(),
+    guild: {
+      name: TERMINAL_CONFIG.guildName,
+      uid: TERMINAL_CONFIG.guildUid,
+      activity: TERMINAL_CONFIG.activityName,
+    },
+    drawRounds: state.drawRounds,
+    winners: state.winners,
+  };
+
+  downloadTextFile(
+    JSON.stringify(payload, null, 2),
+    `draw-history-backup-${Date.now()}.json`,
+  );
+}
+
+function normalizeRounds(rounds) {
+  return rounds
+    .filter((item) => item && Array.isArray(item.winners))
+    .map((item) => ({
+      round: 0,
+      winners: Array.from(new Set(item.winners.map((v) => String(v).trim()).filter(Boolean))),
+      time: typeof item.time === "string" && item.time ? item.time : new Date().toLocaleString(),
+    }))
+    .filter((item) => item.winners.length > 0);
+}
+
+function handleImportHistoryJson(event) {
+  const [file] = event.target.files || [];
+  if (!file) return;
+
+  const reader = new FileReader();
+  reader.onload = () => {
+    try {
+      const parsed = JSON.parse(String(reader.result || "{}"));
+      const rounds = normalizeRounds(parsed.drawRounds || []);
+
+      if (!rounds.length) {
+        showNotice("导入失败：JSON 中未找到有效历史轮次。", true);
+        return;
+      }
+
+      const merged = [...state.drawRounds, ...rounds].map((item, index) => ({
+        round: index + 1,
+        winners: item.winners,
+        time: item.time,
+      }));
+
+      state.drawRounds = merged;
+      state.winners = Array.from(new Set(merged.flatMap((item) => item.winners)));
+      state.lastRoundWinners = [...merged[merged.length - 1].winners];
+
+      renderStats();
+      renderHistoryList();
+      renderResultList(state.lastRoundWinners);
+      saveState();
+      showNotice(`导入成功：新增 ${rounds.length} 轮历史记录。`);
+    } catch (_error) {
+      showNotice("导入失败：JSON 格式不正确。", true);
+    } finally {
+      el.importJsonInput.value = "";
+    }
+  };
+
+  reader.readAsText(file, "utf-8");
 }
 
 function bindEvents() {
@@ -399,7 +565,11 @@ function bindEvents() {
   el.clearListBtn.addEventListener("click", handleClearList);
   el.drawBtn.addEventListener("click", handleDraw);
   el.resetResultBtn.addEventListener("click", handleResetResult);
+  el.exportCurrentBtn.addEventListener("click", handleExportCurrent);
   el.exportBtn.addEventListener("click", handleExport);
+  el.exportJsonBtn.addEventListener("click", handleExportHistoryJson);
+  el.importJsonBtn.addEventListener("click", () => el.importJsonInput.click());
+  el.importJsonInput.addEventListener("change", handleImportHistoryJson);
 
   el.drawCount.addEventListener("change", () => {
     const count = getValidDrawCount();
@@ -434,6 +604,7 @@ function init() {
   loadState();
   renderStats();
   renderResultList([]);
+  renderHistoryList();
   bindEvents();
 }
 
