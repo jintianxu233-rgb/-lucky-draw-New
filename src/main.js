@@ -172,7 +172,6 @@ function parseInputList(rawText) {
 }
 
 function getAvailablePool() {
-  if (getRepeatMode() === "allowRepeat") return [...state.allEntries];
   const winnerSet = new Set(state.winners);
   return state.allEntries.filter((name) => !winnerSet.has(name));
 }
@@ -183,17 +182,8 @@ function getValidDrawCount() {
   return value;
 }
 
-function randomPick(pool, count, allowRepeat) {
+function randomPick(pool, count) {
   if (pool.length === 0 || count <= 0) return [];
-
-  if (allowRepeat) {
-    const picks = [];
-    for (let i = 0; i < count; i += 1) {
-      const idx = Math.floor(Math.random() * pool.length);
-      picks.push(pool[idx]);
-    }
-    return picks;
-  }
 
   const copy = [...pool];
   for (let i = copy.length - 1; i > 0; i -= 1) {
@@ -275,10 +265,8 @@ function loadState() {
       typeof data.rawInput === "string" ? data.rawInput : state.allEntries.join("\n");
     el.drawCount.value = Number.isFinite(data.drawCount) ? String(data.drawCount) : "1";
 
-    if (data.repeatMode === "allowRepeat") {
-      const allowRepeatRadio = el.repeatModeRadios.find((r) => r.value === "allowRepeat");
-      if (allowRepeatRadio) allowRepeatRadio.checked = true;
-    }
+    const noRepeatRadio = el.repeatModeRadios.find((r) => r.value === "noRepeat");
+    if (noRepeatRadio) noRepeatRadio.checked = true;
   } catch (_error) {
     localStorage.removeItem(STORAGE_KEY);
   }
@@ -297,10 +285,8 @@ function handleSaveList() {
   }
 
   state.allEntries = list;
-  if (getRepeatMode() === "noRepeat") {
-    const set = new Set(state.allEntries);
-    state.winners = state.winners.filter((winner) => set.has(winner));
-  }
+  const set = new Set(state.allEntries);
+  state.winners = state.winners.filter((winner) => set.has(winner));
   renderStats();
   saveState();
   showNotice(`成员池已保存并去重，共 ${list.length} 人。`);
@@ -324,7 +310,6 @@ async function handleDraw() {
   if (isDrawing) return;
 
   const drawCount = getValidDrawCount();
-  const allowRepeat = getRepeatMode() === "allowRepeat";
   const pool = getAvailablePool();
 
   if (!state.allEntries.length) {
@@ -333,11 +318,11 @@ async function handleDraw() {
   }
 
   if (!pool.length) {
-    showNotice("当前可抽成员为空，请重置记录或切换允许重复中签。", true);
+    showNotice("当前可抽成员为空，请重置抽取记录后继续。", true);
     return;
   }
 
-  if (!allowRepeat && drawCount > pool.length) {
+  if (drawCount > pool.length) {
     showNotice(`当前最多还能抽 ${pool.length} 人，已按最大值抽取。`);
   }
 
@@ -348,7 +333,7 @@ async function handleDraw() {
   el.resultTip.textContent = "终端演算中，请稍候...";
   await sleep(1200);
 
-  const winners = randomPick(pool, drawCount, allowRepeat);
+  const winners = randomPick(pool, drawCount);
   if (!winners.length) {
     showNotice("本轮未抽取到有效结果。", true);
     isDrawing = false;
@@ -358,7 +343,7 @@ async function handleDraw() {
     return;
   }
 
-  state.winners = [...state.winners, ...winners];
+  state.winners = Array.from(new Set([...state.winners, ...winners]));
   renderResultList(winners);
   renderStats();
   saveState();
@@ -384,7 +369,7 @@ function handleExport() {
     return;
   }
 
-  const modeText = getRepeatMode() === "allowRepeat" ? "允许重复中签" : "不可重复中签";
+  const modeText = "不可重复中签（强制）";
   const lines = [
     "胜利女神工会抽奖终端 / 中签名单导出",
     `公会名称：${TERMINAL_CONFIG.guildName}`,
@@ -434,6 +419,11 @@ function bindEvents() {
 
   el.repeatModeRadios.forEach((radio) => {
     radio.addEventListener("change", () => {
+      if (radio.value === "allowRepeat" && radio.checked) {
+        const noRepeatRadio = el.repeatModeRadios.find((item) => item.value === "noRepeat");
+        if (noRepeatRadio) noRepeatRadio.checked = true;
+        showNotice("当前版本已强制不可重复中签，已自动切回默认模式。");
+      }
       renderStats();
       saveState();
     });
