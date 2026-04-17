@@ -1,0 +1,18 @@
+{
+  "name": "lucky-draw-page",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "homepage": "https://jintianxu233-rgb.github.io/lucky-draw",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
+    "predeploy": "npm run build",
+    "deploy": "gh-pages -d dist"
+  },
+  "devDependencies": {
+    "gh-pages": "^6.3.0",
+    "vite": "^7.1.0"
+  }
+}
