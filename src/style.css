@@ -22,8 +22,8 @@ body {
   font-family: "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
   color: var(--text);
   background-color: var(--bg);
-  /* Background image file in /public (replace this filename if needed) */
-  background-image: url("/background.webp");
+  /* GitHub Pages-safe path (dist/assets -> dist/background.webp) */
+  background-image: url("../background.webp");
   background-size: cover;
   background-position: center;
   background-repeat: no-repeat;
